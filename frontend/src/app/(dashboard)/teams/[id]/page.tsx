@@ -71,6 +71,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     category: 'General',
     split_type: 'equal',
     split_with: [] as string[],
+    custom_splits: {} as Record<string, string>,
   });
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
@@ -169,12 +170,20 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         return;
       }
 
+      const customSplits = Object.entries(newExpense.custom_splits)
+        .filter(([userId]) => splitWith.includes(userId))
+        .map(([userId, amount]) => ({
+          user_id: userId,
+          amount: parseFloat(amount) || 0,
+        }));
+
       const response = await api.post(`/teams/${id}/expenses`, {
         description: newExpense.description,
         amount: amount,
         category: newExpense.category,
         split_type: newExpense.split_type,
         split_with: splitWith,
+        custom_splits: customSplits,
       });
       
       const expenseId = response.data.data.id;
@@ -190,7 +199,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
       toast.success('Expense added successfully');
       setIsAddExpenseOpen(false);
-      setNewExpense({ description: '', amount: '', category: 'General', split_type: 'equal', split_with: [] });
+      setNewExpense({ description: '', amount: '', category: 'General', split_type: 'equal', split_with: [], custom_splits: {} });
       setReceiptFile(null);
       
       refreshData();
@@ -321,21 +330,45 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                   <div className="grid gap-2">
                     <Label>Split With</Label>
-                    <div className="grid grid-cols-2 gap-2 border p-2 rounded-md max-h-32 overflow-y-auto">
+                    <div className="grid grid-cols-1 gap-3 border p-3 rounded-md max-h-60 overflow-y-auto">
                       {members.map(member => (
-                        <div key={member.user_id} className="flex items-center space-x-2">
-                          <Checkbox 
-                            id={`member-${member.user_id}`} 
-                            checked={newExpense.split_with.includes(member.user_id)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setNewExpense({...newExpense, split_with: [...newExpense.split_with, member.user_id]});
-                              } else {
-                                setNewExpense({...newExpense, split_with: newExpense.split_with.filter(id => id !== member.user_id)});
-                              }
-                            }}
-                          />
-                          <label htmlFor={`member-${member.user_id}`} className="text-sm truncate">{member.name}</label>
+                        <div key={member.user_id} className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox 
+                              id={`member-${member.user_id}`} 
+                              checked={newExpense.split_with.includes(member.user_id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setNewExpense({...newExpense, split_with: [...newExpense.split_with, member.user_id]});
+                                } else {
+                                  setNewExpense({...newExpense, split_with: newExpense.split_with.filter(id => id !== member.user_id)});
+                                }
+                              }}
+                            />
+                            <label htmlFor={`member-${member.user_id}`} className="text-sm font-medium truncate">{member.name}</label>
+                          </div>
+                          
+                          {newExpense.split_with.includes(member.user_id) && newExpense.split_type !== 'equal' && (
+                            <div className="pl-6 flex items-center gap-2">
+                              <Label className="text-xs text-gray-500 w-16">
+                                {newExpense.split_type === 'custom' ? 'Amount ($)' : 'Percent (%)'}
+                              </Label>
+                              <Input 
+                                type="number" 
+                                step="0.01"
+                                className="h-8 text-sm"
+                                placeholder={newExpense.split_type === 'custom' ? '0.00' : '0'}
+                                value={newExpense.custom_splits[member.user_id] || ''}
+                                onChange={(e) => setNewExpense({
+                                  ...newExpense, 
+                                  custom_splits: {
+                                    ...newExpense.custom_splits,
+                                    [member.user_id]: e.target.value
+                                  }
+                                })}
+                              />
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
