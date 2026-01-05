@@ -1,644 +1,240 @@
 'use client';
 
-import React, { useEffect, useState, use } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import React, { useState, use } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Receipt, Users, BarChart3, Download, Trash2, CheckCircle, XCircle, Clock, FileText } from 'lucide-react';
+import { Receipt, Users, BarChart3, Plus, Mail } from 'lucide-react';
 import api from '@/lib/api';
 import { toast } from 'sonner';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
-interface Expense {
-  id: string;
-  description: string;
-  amount: number;
-  paid_by: {
-    id: string;
-    name: string;
-    email: string;
-  };
-  created_at: string;
-  category: string;
-  receipt_url?: string;
-  approval_status: 'pending' | 'approved' | 'rejected';
-}
-
-interface Approval {
-  id: string;
-  expense_id: string;
-  status: 'pending' | 'approved' | 'rejected';
-  comment?: string;
-  created_at: string;
-  expense?: Expense;
-}
-
-interface TeamMember {
-  user_id: string;
-  name: string;
-  email: string;
-  role: string;
-}
-
-interface Team {
-  id: string;
-  name: string;
-  description: string;
-}
+// Components
+import { TeamHeader } from './components/TeamHeader';
+import { ExpenseList } from './components/ExpenseList';
+import { MemberList } from './components/MemberList';
+import { BalanceSummary } from './components/BalanceSummary';
+import { ApprovalList } from './components/ApprovalList';
+import { AddExpenseDialog } from './components/AddExpenseDialog';
 
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [team, setTeam] = useState<Team | null>(null);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [balances, setBalances] = useState<any[]>([]);
-  const [memberBalances, setMemberBalances] = useState<any[]>([]);
-  const [approvals, setApprovals] = useState<Approval[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  
+  const queryClient = useQueryClient();
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newExpense, setNewExpense] = useState({
-    description: '',
-    amount: '',
-    category: 'General',
-    split_type: 'equal',
-    split_with: [] as string[],
-    custom_splits: {} as Record<string, string>,
+
+  // Queries
+  const { data: team, isLoading: isTeamLoading } = useQuery({
+    queryKey: ['team', id],
+    queryFn: async () => (await api.get(`/teams/${id}`)).data.data
   });
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [teamRes, expensesRes, membersRes, balancesRes, approvalsRes] = await Promise.all([
-          api.get(`/teams/${id}`),
-          api.get(`/teams/${id}/expenses`),
-          api.get(`/teams/${id}/members`),
-          api.get(`/teams/${id}/balances`),
-          api.get(`/teams/${id}/approvals`),
-        ]);
-        
-        setTeam(teamRes.data.data);
-        const expensesData = expensesRes.data.data || [];
-        setExpenses(expensesData);
-        setMembers(membersRes.data.data || []);
-        setBalances(balancesRes.data.data.balances || []);
-        setMemberBalances(balancesRes.data.data.members || []);
-        
-        // Enrich approvals with expense info
-        const enrichedApprovals = (approvalsRes.data.data || []).map((a: any) => {
-          const exp = expensesData.find((e: any) => e.id === a.expense_id);
-          return {
-            ...a,
-            expense: exp,
-          };
-        });
-        setApprovals(enrichedApprovals);
-      } catch (error) {
-        console.error(error);
-        toast.error('Failed to fetch team data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const { data: expenses = [], isLoading: isExpensesLoading } = useQuery({
+    queryKey: ['team-expenses', id],
+    queryFn: async () => (await api.get(`/teams/${id}/expenses`)).data.data || []
+  });
 
-    fetchData();
-  }, [id]);
+  const { data: members = [], isLoading: isMembersLoading } = useQuery({
+    queryKey: ['team-members', id],
+    queryFn: async () => (await api.get(`/teams/${id}/members`)).data.data || []
+  });
 
-  const refreshData = async () => {
-    try {
-      const [expensesRes, balancesRes, approvalsRes] = await Promise.all([
-        api.get(`/teams/${id}/expenses`),
-        api.get(`/teams/${id}/balances`),
-        api.get(`/teams/${id}/approvals`),
-      ]);
+  const { data: balancesData, isLoading: isBalancesLoading } = useQuery({
+    queryKey: ['team-balances', id],
+    queryFn: async () => (await api.get(`/teams/${id}/balances`)).data.data
+  });
+
+  const { data: approvals = [], isLoading: isApprovalsLoading } = useQuery({
+    queryKey: ['team-approvals', id],
+    queryFn: async () => {
+      const res = await api.get(`/teams/${id}/approvals`);
+      const approvalsData = res.data.data || [];
+      return approvalsData.map((a: any) => ({
+        ...a,
+        expense: expenses.find((e: any) => e.id === a.expense_id)
+      }));
+    },
+    enabled: !!expenses.length
+  });
+
+  // Mutations
+  const addExpenseMutation = useMutation({
+    mutationFn: async ({ data, file }: { data: any, file: File | null }) => {
+      const amount = parseFloat(data.amount);
+      const splitWith = data.split_with.length > 0 ? data.split_with : members.map((m: any) => m.user_id);
       
-      const expensesData = expensesRes.data.data || [];
-      setExpenses(expensesData);
-      setBalances(balancesRes.data.data.balances || []);
-      setMemberBalances(balancesRes.data.data.members || []);
-      
-      const enrichedApprovals = (approvalsRes.data.data || []).map((a: any) => {
-        const exp = expensesData.find((e: any) => e.id === a.expense_id);
-        return { ...a, expense: exp };
-      });
-      setApprovals(enrichedApprovals);
-    } catch (error) {
-      console.error('Failed to refresh data', error);
-    }
-  };
-
-  const handleAddMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.post(`/teams/${id}/members`, {
-        email: newMemberEmail,
-        role: 'member',
-      });
-      toast.success('Member added successfully');
-      setIsAddMemberOpen(false);
-      setNewMemberEmail('');
-      
-      // Refresh members
-      const membersRes = await api.get(`/teams/${id}/members`);
-      setMembers(membersRes.data.data || []);
-    } catch (error) {
-      toast.error('Failed to add member. Make sure the user exists.');
-    }
-  };
-
-  const handleAddExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const amount = parseFloat(newExpense.amount);
-      if (isNaN(amount) || amount <= 0) {
-        toast.error('Please enter a valid amount');
-        return;
-      }
-      
-      const splitWith = newExpense.split_with.length > 0 ? newExpense.split_with : members.map(m => m.user_id);
-      if (splitWith.length === 0) {
-        toast.error('Please select at least one member to split with');
-        return;
-      }
-
-      const customSplits = Object.entries(newExpense.custom_splits)
-        .filter(([userId]) => splitWith.includes(userId))
-        .map(([userId, amount]) => ({
-          user_id: userId,
-          amount: parseFloat(amount) || 0,
-        }));
-
-      const response = await api.post(`/teams/${id}/expenses`, {
-        description: newExpense.description,
-        amount: amount,
-        category: newExpense.category,
-        split_type: newExpense.split_type,
+      const res = await api.post(`/teams/${id}/expenses`, {
+        ...data,
+        amount,
         split_with: splitWith,
-        custom_splits: customSplits,
       });
       
-      const expenseId = response.data.data.id;
-
-      // Upload receipt if exists
-      if (receiptFile) {
+      if (file) {
         const formData = new FormData();
-        formData.append('receipt', receiptFile);
-        await api.post(`/teams/${id}/expenses/${expenseId}/receipt`, formData, {
+        formData.append('receipt', file);
+        await api.post(`/teams/${id}/expenses/${res.data.data.id}/receipt`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
       }
-
+      return res.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-expenses', id] });
+      queryClient.invalidateQueries({ queryKey: ['team-balances', id] });
       toast.success('Expense added successfully');
       setIsAddExpenseOpen(false);
-      setNewExpense({ description: '', amount: '', category: 'General', split_type: 'equal', split_with: [], custom_splits: {} });
-      setReceiptFile(null);
-      
-      refreshData();
-    } catch (error) {
-      toast.error('Failed to add expense');
-    }
-  };
+    },
+    onError: () => toast.error('Failed to add expense')
+  });
 
-  const handleUpdateApproval = async (approvalId: string, status: 'approved' | 'rejected') => {
-    try {
-      await api.put(`/teams/${id}/approvals/${approvalId}`, { status });
-      toast.success(`Expense ${status}`);
-      refreshData();
-    } catch (error) {
-      toast.error('Failed to update approval');
-    }
-  };
-
-  const handleSettle = async (fromUser: string, toUser: string, amount: number) => {
-    try {
-      await api.post(`/teams/${id}/settlements`, {
-        from_user: fromUser,
-        to_user: toUser,
-        amount: amount,
-      });
-      toast.success('Settlement recorded');
-      refreshData();
-    } catch (error) {
-      toast.error('Failed to record settlement');
-    }
-  };
-
-  const handleDeleteExpense = async (expenseId: string) => {
-    if (!confirm('Are you sure you want to delete this expense?')) return;
-    try {
-      await api.delete(`/teams/${id}/expenses/${expenseId}`);
+  const deleteExpenseMutation = useMutation({
+    mutationFn: async (expenseId: string) => api.delete(`/teams/${id}/expenses/${expenseId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-expenses', id] });
+      queryClient.invalidateQueries({ queryKey: ['team-balances', id] });
       toast.success('Expense deleted');
-      refreshData();
-    } catch (error) {
-      toast.error('Failed to delete expense');
     }
-  };
+  });
 
-  const handleExport = async (type: string) => {
-    try {
-      const response = await api.get(`/teams/${id}/export/${type}`, {
-        responseType: 'blob',
-      });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${type}_${id}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (error) {
-      toast.error('Failed to export data');
+  const addMemberMutation = useMutation({
+    mutationFn: async (email: string) => api.post(`/teams/${id}/members`, { email, role: 'member' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-members', id] });
+      toast.success('Member added successfully');
+      setIsAddMemberOpen(false);
+      setNewMemberEmail('');
+    },
+    onError: () => toast.error('Failed to add member')
+  });
+
+  const updateApprovalMutation = useMutation({
+    mutationFn: async ({ approvalId, status }: { approvalId: string, status: string }) => 
+      api.put(`/teams/${id}/approvals/${approvalId}`, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-approvals', id] });
+      queryClient.invalidateQueries({ queryKey: ['team-expenses', id] });
+      toast.success('Approval updated');
     }
-  };
+  });
 
-  if (isLoading) return <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div></div>;
-  if (!team) return <div>Team not found</div>;
+  const settleMutation = useMutation({
+    mutationFn: async ({ from, to, amount }: { from: string, to: string, amount: number }) => 
+      api.post(`/teams/${id}/settlements`, { from_user: from, to_user: to, amount }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-balances', id] });
+      toast.success('Settlement recorded');
+    }
+  });
+
+  if (isTeamLoading) return (
+    <div className="space-y-8">
+      <Skeleton className="h-20 w-full rounded-2xl" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <Skeleton className="h-12 w-64 rounded-xl" />
+          <Skeleton className="h-[400px] w-full rounded-2xl" />
+        </div>
+        <div className="space-y-6">
+          <Skeleton className="h-[300px] w-full rounded-2xl" />
+          <Skeleton className="h-[300px] w-full rounded-2xl" />
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!team) return <div className="text-center py-20">Team not found</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">{team.name}</h1>
-          <p className="text-gray-500">{team.description}</p>
+    <div className="space-y-8">
+      <TeamHeader team={team} onAddExpense={() => setIsAddExpenseOpen(true)} />
+
+      <ApprovalList 
+        approvals={approvals} 
+        onUpdate={(approvalId, status) => updateApprovalMutation.mutate({ approvalId, status })} 
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2">
+          <Tabs defaultValue="expenses" className="w-full">
+            <div className="flex items-center justify-between mb-6">
+              <TabsList className="bg-secondary/50 p-1 rounded-xl">
+                <TabsTrigger value="expenses" className="rounded-lg px-6 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Receipt className="w-4 h-4 mr-2" />
+                  Expenses
+                </TabsTrigger>
+                <TabsTrigger value="members" className="rounded-lg px-6 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Users className="w-4 h-4 mr-2" />
+                  Members
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="expenses" className="mt-0">
+              <ExpenseList 
+                expenses={expenses} 
+                onDelete={(id) => deleteExpenseMutation.mutate(id)} 
+              />
+            </TabsContent>
+
+            <TabsContent value="members" className="mt-0">
+              <MemberList 
+                members={members} 
+                onAddMember={() => setIsAddMemberOpen(true)} 
+              />
+            </TabsContent>
+          </Tabs>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => handleExport('summary')}>
-            <Download className="w-4 h-4 mr-2" />
-            Summary Report
-          </Button>
-          <Button variant="outline" onClick={() => handleExport('expenses')}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-          <Dialog open={isAddExpenseOpen} onOpenChange={setIsAddExpenseOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Expense
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New Expense</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleAddExpense}>
-                <div className="grid gap-4 py-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="desc">Description</Label>
-                    <Input id="desc" value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} required />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="amount">Amount</Label>
-                    <Input id="amount" type="number" step="0.01" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} required />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="split_type">Split Type</Label>
-                    <Select value={newExpense.split_type} onValueChange={v => setNewExpense({...newExpense, split_type: v})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select split type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="equal">Equal Split</SelectItem>
-                        <SelectItem value="custom">Custom Amount</SelectItem>
-                        <SelectItem value="percent">Percentage</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="category">Category</Label>
-                    <Select value={newExpense.category} onValueChange={v => setNewExpense({...newExpense, category: v})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="General">General</SelectItem>
-                        <SelectItem value="Food & Dining">Food & Dining</SelectItem>
-                        <SelectItem value="Transportation">Transportation</SelectItem>
-                        <SelectItem value="Office Supplies">Office Supplies</SelectItem>
-                        <SelectItem value="Software & Tools">Software & Tools</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Split With</Label>
-                    <div className="grid grid-cols-1 gap-3 border p-3 rounded-md max-h-60 overflow-y-auto">
-                      {members.map(member => (
-                        <div key={member.user_id} className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <Checkbox 
-                              id={`member-${member.user_id}`} 
-                              checked={newExpense.split_with.includes(member.user_id)}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  setNewExpense({...newExpense, split_with: [...newExpense.split_with, member.user_id]});
-                                } else {
-                                  setNewExpense({...newExpense, split_with: newExpense.split_with.filter(id => id !== member.user_id)});
-                                }
-                              }}
-                            />
-                            <label htmlFor={`member-${member.user_id}`} className="text-sm font-medium truncate">{member.name}</label>
-                          </div>
-                          
-                          {newExpense.split_with.includes(member.user_id) && newExpense.split_type !== 'equal' && (
-                            <div className="pl-6 flex items-center gap-2">
-                              <Label className="text-xs text-gray-500 w-16">
-                                {newExpense.split_type === 'custom' ? 'Amount ($)' : 'Percent (%)'}
-                              </Label>
-                              <Input 
-                                type="number" 
-                                step="0.01"
-                                className="h-8 text-sm"
-                                placeholder={newExpense.split_type === 'custom' ? '0.00' : '0'}
-                                value={newExpense.custom_splits[member.user_id] || ''}
-                                onChange={(e) => setNewExpense({
-                                  ...newExpense, 
-                                  custom_splits: {
-                                    ...newExpense.custom_splits,
-                                    [member.user_id]: e.target.value
-                                  }
-                                })}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="receipt">Receipt (Optional)</Label>
-                    <Input id="receipt" type="file" onChange={e => setReceiptFile(e.target.files?.[0] || null)} />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="submit">Add Expense</Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+
+        <div className="space-y-8">
+          <BalanceSummary 
+            balances={balancesData?.balances || []} 
+            memberBalances={balancesData?.members || []}
+            onSettle={(from, to, amount) => settleMutation.mutate({ from, to, amount })}
+          />
         </div>
       </div>
 
-      <Tabs defaultValue="expenses">
-        <TabsList>
-          <TabsTrigger value="expenses">
-            <Receipt className="w-4 h-4 mr-2" />
-            Expenses
-          </TabsTrigger>
-          <TabsTrigger value="balances">
-            <BarChart3 className="w-4 h-4 mr-2" />
-            Balances
-          </TabsTrigger>
-          <TabsTrigger value="approvals">
-            <CheckCircle className="w-4 h-4 mr-2" />
-            Approvals
-          </TabsTrigger>
-          <TabsTrigger value="members">
-            <Users className="w-4 h-4 mr-2" />
-            Members
-          </TabsTrigger>
-        </TabsList>
+      <AddExpenseDialog 
+        isOpen={isAddExpenseOpen} 
+        onOpenChange={setIsAddExpenseOpen} 
+        members={members}
+        onSubmit={(data, file) => addExpenseMutation.mutate({ data, file })}
+      />
 
-        <TabsContent value="expenses" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Expense History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Payer</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {expenses.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-gray-500">No expenses yet</TableCell>
-                    </TableRow>
-                  ) : (
-                    expenses.map((expense) => (
-                      <TableRow key={expense.id}>
-                        <TableCell>{new Date(expense.created_at).toLocaleDateString()}</TableCell>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {expense.description}
-                            {expense.receipt_url && (
-                              <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}${expense.receipt_url}`} target="_blank" rel="noreferrer">
-                                <FileText className="w-4 h-4 text-blue-500 cursor-pointer" />
-                              </a>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{expense.paid_by.name}</TableCell>
-                        <TableCell>{expense.category}</TableCell>
-                        <TableCell>
-                          <Badge variant={
-                            expense.approval_status === 'approved' ? 'default' : 
-                            expense.approval_status === 'rejected' ? 'destructive' : 
-                            'outline'
-                          }>
-                            {expense.approval_status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-bold">${expense.amount.toFixed(2)}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteExpense(expense.id)}>
-                            <Trash2 className="w-4 h-4 text-red-500" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="balances" className="mt-6">
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Settlements Needed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {balances.length === 0 ? (
-                    <p className="text-center py-4 text-gray-500">All settled up!</p>
-                  ) : (
-                    balances.map((balance, i) => (
-                      <div key={i} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div className="text-sm">
-                          <span className="font-bold">{balance.from_user.name}</span> owes <span className="font-bold">{balance.to_user.name}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-lg font-bold text-red-600">
-                            ${balance.amount.toFixed(2)}
-                          </div>
-                          <Button size="sm" onClick={() => handleSettle(balance.from_user.id, balance.to_user.id, balance.amount)}>
-                            Settle
-                          </Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Member Summaries</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {memberBalances.map((mb) => (
-                    <div key={mb.user.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
-                          {mb.user.name.charAt(0)}
-                        </div>
-                        <div>
-                          <p className="font-medium">{mb.user.name}</p>
-                          <p className="text-xs text-gray-500">Owes: ${mb.total_owed.toFixed(2)} | Owed: ${mb.total_owing.toFixed(2)}</p>
-                        </div>
-                      </div>
-                      <div className={`text-lg font-bold ${mb.net_balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {mb.net_balance >= 0 ? `+ $${mb.net_balance.toFixed(2)}` : `- $${Math.abs(mb.net_balance).toFixed(2)}`}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="approvals" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Expense Approvals</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Expense</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {approvals.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-gray-500">No approvals found</TableCell>
-                    </TableRow>
-                  ) : (
-                    approvals.map((approval) => (
-                      <TableRow key={approval.id}>
-                        <TableCell className="font-medium">{approval.expense?.description || 'Unknown Expense'}</TableCell>
-                        <TableCell>${approval.expense?.amount?.toFixed(2) || '0.00'}</TableCell>
-                        <TableCell>
-                          <Badge variant={approval.status === 'approved' ? 'default' : approval.status === 'rejected' ? 'destructive' : 'outline'}>
-                            {approval.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{new Date(approval.created_at).toLocaleDateString()}</TableCell>
-                        <TableCell className="text-right">
-                          {approval.status === 'pending' && (
-                            <div className="flex justify-end gap-2">
-                              <Button size="sm" variant="outline" className="text-green-600" onClick={() => handleUpdateApproval(approval.id, 'approved')}>
-                                <CheckCircle className="w-4 h-4 mr-1" /> Approve
-                              </Button>
-                              <Button size="sm" variant="outline" className="text-red-600" onClick={() => handleUpdateApproval(approval.id, 'rejected')}>
-                                <XCircle className="w-4 h-4 mr-1" /> Reject
-                              </Button>
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="members" className="mt-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Team Members</CardTitle>
-              <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Member
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Team Member</DialogTitle>
-                  </DialogHeader>
-                  <form onSubmit={handleAddMember}>
-                    <div className="grid gap-4 py-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="email">User Email</Label>
-                        <Input 
-                          id="email" 
-                          type="email" 
-                          placeholder="user@example.com" 
-                          value={newMemberEmail} 
-                          onChange={e => setNewMemberEmail(e.target.value)} 
-                          required 
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button type="submit">Add Member</Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {members.map((member) => (
-                  <div key={member.user_id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-bold">
-                        {member.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-medium">{member.name}</p>
-                        <p className="text-sm text-gray-500">{member.email}</p>
-                      </div>
-                    </div>
-                    <Badge variant="secondary">{member.role}</Badge>
-                  </div>
-                ))}
+      <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>
+        <DialogContent className="sm:max-w-[425px] rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold">Add Team Member</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); addMemberMutation.mutate(newMemberEmail); }} className="space-y-6 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="email" className="text-sm font-semibold">Email Address</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input 
+                  id="email" 
+                  type="email" 
+                  placeholder="colleague@example.com" 
+                  className="pl-10 rounded-xl h-11"
+                  value={newMemberEmail} 
+                  onChange={e => setNewMemberEmail(e.target.value)} 
+                  required 
+                />
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </div>
+            <DialogFooter>
+              <Button type="submit" className="w-full rounded-xl h-11 shadow-lg shadow-primary/20">
+                Send Invitation
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
